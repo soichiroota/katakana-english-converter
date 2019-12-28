@@ -5,7 +5,7 @@ import pickle
 
 import numpy as np
 from tensorflow.keras.layers import Input, Convolution1D, Dot, Dense, Activation, Concatenate
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.callbacks import EarlyStopping
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -63,12 +63,6 @@ input_token_index = dict(
 target_token_index = dict(
     [(char, i) for i, char in enumerate(target_characters)])
 print(target_token_index)
-
-cur_dir = os.path.dirname(__file__)
-pickle.dump(input_token_index, open(os.path.join(cur_dir, 'pkl_objects',
-   'input_token_index.pkl'), 'wb'), protocol=4)
-pickle.dump(target_token_index, open(os.path.join(cur_dir, 'pkl_objects',
-   'target_token_index.pkl'), 'wb'), protocol=4)
 
 encoder_input_data = np.zeros(
     (len(input_texts), max_encoder_seq_length, num_encoder_tokens),
@@ -129,7 +123,8 @@ decoder_outputs = decoder_dense(decoder_outputs)
 
 # Define the model that will turn
 # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
-model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+# model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+model = load_model('katakana_english_converter/keras/h5_objects/cnn_s2s.h5')
 model.summary()
 
 # Run training
@@ -137,6 +132,7 @@ model.compile(optimizer='adam', loss='categorical_crossentropy',
               metrics=['accuracy'])
 encoder_x_train, encoder_x_test, decoder_x_train, decoder_x_test, y_train, y_test, indices_train, indices_test = train_test_split(
     encoder_input_data, decoder_input_data, decoder_target_data, np.arange(len(decoder_target_data)), test_size=0.01, random_state=111)
+"""
 model.fit([encoder_x_train, decoder_x_train], y_train,
           batch_size=batch_size,
           epochs=epochs,
@@ -144,6 +140,7 @@ model.fit([encoder_x_train, decoder_x_train], y_train,
           callbacks=[EarlyStopping(monitor='val_loss', patience=5, verbose=1)])
 # Save model
 model.save('katakana_english_converter/keras/h5_objects/cnn_s2s.h5')
+"""
 
 # Next: inference mode (sampling).
 

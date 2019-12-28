@@ -3,10 +3,10 @@ from __future__ import print_function
 import os
 import pickle
 
-import numpy as np
-from tensorflow.keras.layers import Input, Convolution1D, Dot, Dense, Activation, Concatenate
-from tensorflow.keras.models import Model
+from  tensorflow.keras.models import Model, load_model
+from tensorflow.keras.layers import Input, LSTM, Dense
 from tensorflow.keras.callbacks import EarlyStopping
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
@@ -64,12 +64,6 @@ target_token_index = dict(
     [(char, i) for i, char in enumerate(target_characters)])
 print(target_token_index)
 
-cur_dir = os.path.dirname(__file__)
-pickle.dump(input_token_index, open(os.path.join(cur_dir, 'pkl_objects',
-   'input_token_index.pkl'), 'wb'), protocol=4)
-pickle.dump(target_token_index, open(os.path.join(cur_dir, 'pkl_objects',
-   'target_token_index.pkl'), 'wb'), protocol=4)
-
 encoder_input_data = np.zeros(
     (len(input_texts), max_encoder_seq_length, num_encoder_tokens),
     dtype='float32')
@@ -96,101 +90,105 @@ for i, (input_text, target_text) in enumerate(zip(input_texts, target_texts)):
 
 # Define an input sequence and process it.
 encoder_inputs = Input(shape=(None, num_encoder_tokens))
-# Encoder
-x_encoder = Convolution1D(256, kernel_size=3, activation='relu',
-                          padding='causal')(encoder_inputs)
-x_encoder = Convolution1D(256, kernel_size=3, activation='relu',
-                          padding='causal', dilation_rate=2)(x_encoder)
-x_encoder = Convolution1D(256, kernel_size=3, activation='relu',
-                          padding='causal', dilation_rate=4)(x_encoder)
+encoder = LSTM(latent_dim, return_state=True)
+encoder_outputs, state_h, state_c = encoder(encoder_inputs)
+# We discard `encoder_outputs` and only keep the states.
+encoder_states = [state_h, state_c]
 
+# Set up the decoder, using `encoder_states` as initial state.
 decoder_inputs = Input(shape=(None, num_decoder_tokens))
-# Decoder
-x_decoder = Convolution1D(256, kernel_size=3, activation='relu',
-                          padding='causal')(decoder_inputs)
-x_decoder = Convolution1D(256, kernel_size=3, activation='relu',
-                          padding='causal', dilation_rate=2)(x_decoder)
-x_decoder = Convolution1D(256, kernel_size=3, activation='relu',
-                          padding='causal', dilation_rate=4)(x_decoder)
-# Attention
-attention = Dot(axes=[2, 2])([x_decoder, x_encoder])
-attention = Activation('softmax')(attention)
-
-context = Dot(axes=[2, 1])([attention, x_encoder])
-decoder_combined_context = Concatenate(axis=-1)([context, x_decoder])
-
-decoder_outputs = Convolution1D(64, kernel_size=3, activation='relu',
-                                padding='causal')(decoder_combined_context)
-decoder_outputs = Convolution1D(64, kernel_size=3, activation='relu',
-                                padding='causal')(decoder_outputs)
-# Output
+# We set up our decoder to return full output sequences,
+# and to return internal states as well. We don't use the
+# return states in the training model, but we will use them in inference.
+decoder_lstm = LSTM(latent_dim, return_sequences=True, return_state=True)
+decoder_outputs, _, _ = decoder_lstm(decoder_inputs,
+                                     initial_state=encoder_states)
 decoder_dense = Dense(num_decoder_tokens, activation='softmax')
 decoder_outputs = decoder_dense(decoder_outputs)
 
 # Define the model that will turn
 # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
-model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-model.summary()
+# model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+model = load_model('katakana_english_converter/keras/h5_objects/s2s.h5')
 
-# Run training
-model.compile(optimizer='adam', loss='categorical_crossentropy',
-              metrics=['accuracy'])
-encoder_x_train, encoder_x_test, decoder_x_train, decoder_x_test, y_train, y_test, indices_train, indices_test = train_test_split(
-    encoder_input_data, decoder_input_data, decoder_target_data, np.arange(len(decoder_target_data)), test_size=0.01, random_state=111)
-model.fit([encoder_x_train, decoder_x_train], y_train,
-          batch_size=batch_size,
-          epochs=epochs,
-          validation_split=0.1,
-          callbacks=[EarlyStopping(monitor='val_loss', patience=5, verbose=1)])
-# Save model
-model.save('katakana_english_converter/keras/h5_objects/cnn_s2s.h5')
+encoder_inputs = model.input[0]   # input_1
+encoder_outputs, state_h_enc, state_c_enc = model.layers[2].output   # lstm_1
+encoder_states = [state_h_enc, state_c_enc]
+encoder_model = Model(encoder_inputs, encoder_states)
 
-# Next: inference mode (sampling).
+decoder_inputs = model.input[1]   # input_2
+decoder_state_input_h = Input(shape=(latent_dim,), name='input_3')
+decoder_state_input_c = Input(shape=(latent_dim,), name='input_4')
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+decoder_lstm = model.layers[3]
+decoder_outputs, state_h_dec, state_c_dec = decoder_lstm(
+    decoder_inputs, initial_state=decoder_states_inputs)
+decoder_states = [state_h_dec, state_c_dec]
+decoder_dense = model.layers[4]
+decoder_outputs = decoder_dense(decoder_outputs)
+decoder_model = Model(
+    [decoder_inputs] + decoder_states_inputs,
+    [decoder_outputs] + decoder_states)
 
-# Define sampling models
+# Reverse-lookup token index to decode sequences back to
+# something readable.
 reverse_input_char_index = dict(
     (i, char) for char, i in input_token_index.items())
 reverse_target_char_index = dict(
     (i, char) for char, i in target_token_index.items())
 
 
-nb_examples = 100
+def decode_sequence(input_seq):
+    # Encode the input as state vectors.
+    states_value = encoder_model.predict(input_seq)
+
+    # Generate empty target sequence of length 1.
+    target_seq = np.zeros((1, 1, num_decoder_tokens))
+    # Populate the first character of target sequence with the start character.
+    target_seq[0, 0, target_token_index['\t']] = 1.
+
+    # Sampling loop for a batch of sequences
+    # (to simplify, here we assume a batch of size 1).
+    stop_condition = False
+    decoded_sentence = ''
+    while not stop_condition:
+        output_tokens, h, c = decoder_model.predict(
+            [target_seq] + states_value)
+
+        # Sample a token
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+        sampled_char = reverse_target_char_index[sampled_token_index]
+        decoded_sentence += sampled_char
+
+        # Exit condition: either hit max length
+        # or find stop character.
+        if (sampled_char == '\n' or
+           len(decoded_sentence) > max_decoder_seq_length):
+            stop_condition = True
+
+        # Update the target sequence (of length 1).
+        target_seq = np.zeros((1, 1, num_decoder_tokens))
+        target_seq[0, 0, sampled_token_index] = 1.
+
+        # Update states
+        states_value = [h, c]
+
+    return decoded_sentence
+
+
+encoder_x_train, encoder_x_test, decoder_x_train, decoder_x_test, y_train, y_test, indices_train, indices_test = train_test_split(
+    encoder_input_data, decoder_input_data, decoder_target_data, np.arange(len(decoder_target_data)), test_size=0.01, random_state=111)
 scores = []
-in_encoder = encoder_input_data[list(indices_test)]
-in_decoder = np.zeros(
-    (len(input_texts), max_decoder_seq_length, num_decoder_tokens),
-    dtype='float32')
-
-in_decoder[:, 0, target_token_index["\t"]] = 1
-
-predict = np.zeros(
-    (len(input_texts), max_decoder_seq_length),
-    dtype='float32')
-
-for i in range(max_decoder_seq_length - 1):
-    predict = model.predict([in_encoder, in_decoder])
-    predict = predict.argmax(axis=-1)
-    predict_ = predict[:, i].ravel().tolist()
-    for j, x in enumerate(predict_):
-        in_decoder[j, i + 1, x] = 1
-
-
-for i, seq_index in enumerate(indices_test):
+for seq_index in indices_test:
     # Take one sequence (part of the training set)
     # for trying out decoding.
-    output_seq = predict[i, :].ravel().tolist()
-    decoded = []
-    for x in output_seq:
-        if reverse_target_char_index[x] == "\n":
-            break
-        else:
-            decoded.append(reverse_target_char_index[x])
-    decoded_sentence = "".join(decoded)
+    input_seq = encoder_input_data[seq_index: seq_index + 1]
+    decoded_sentence = decode_sequence(input_seq)
     print('-')
     print('Input sentence:', input_texts[seq_index])
     print('Decoded sentence:', decoded_sentence)
     print('True sentence:', target_texts[seq_index])
-    reference = [list(target_texts[seq_index])[1:-1]]
+    reference = [list(target_texts[seq_index])[1:]]
     prediction = list(decoded_sentence)
     bleu = sentence_bleu(reference, prediction)
     print(bleu)

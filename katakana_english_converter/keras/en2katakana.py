@@ -206,7 +206,7 @@ for seq_index in indices_test:
     print('Input sentence:', input_texts[seq_index])
     print('Decoded sentence:', decoded_sentence)
     print('True sentence:', target_texts[seq_index])
-    reference = [list(target_texts[seq_index])]
+    reference = [list(target_texts[seq_index])[1:]]
     prediction = list(decoded_sentence)
     bleu = sentence_bleu(reference, prediction)
     print(bleu)
