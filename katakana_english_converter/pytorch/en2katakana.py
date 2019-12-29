@@ -221,7 +221,7 @@ hidden_size = 256
 encoder1 = EncoderRNN(input_lang.n_chars, hidden_size).to(device)
 attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_chars, dropout_p=0.1).to(device)
 
-trainIters(encoder1, attn_decoder1, 75000*3, print_every=5000)
+trainIters(encoder1, attn_decoder1, 75000*8, print_every=5000)
 
 evaluateRandomly(encoder1, attn_decoder1)
 

@@ -141,7 +141,7 @@ model.fit([encoder_x_train, decoder_x_train], y_train,
           batch_size=batch_size,
           epochs=epochs,
           validation_split=0.1,
-          callbacks=[EarlyStopping(monitor='val_loss', patience=5, verbose=1)])
+          callbacks=[EarlyStopping(monitor='val_loss', patience=10, verbose=1)])
 # Save model
 model.save('katakana_english_converter/keras/h5_objects/cnn_s2s.h5')
 
