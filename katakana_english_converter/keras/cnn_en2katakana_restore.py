@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import os
 import pickle
+import json
 
 import numpy as np
 from tensorflow.keras.layers import Input, Convolution1D, Dot, Dense, Activation, Concatenate
@@ -63,6 +64,18 @@ input_token_index = dict(
 target_token_index = dict(
     [(char, i) for i, char in enumerate(target_characters)])
 print(target_token_index)
+
+cur_dir = os.path.dirname(__file__)
+with open(
+    os.path.join(cur_dir, 'json', 'input_token_index.json'),
+    'w'
+) as fp:
+    json.dump(input_token_index, fp, ensure_ascii=False, indent=2)
+with open(
+    os.path.join(cur_dir, 'json', 'target_token_index.json'),
+    'w'
+) as fp:
+    json.dump(target_token_index, fp, ensure_ascii=False, indent=2)
 
 encoder_input_data = np.zeros(
     (len(input_texts), max_encoder_seq_length, num_encoder_tokens),
