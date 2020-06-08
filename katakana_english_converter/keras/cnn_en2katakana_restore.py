@@ -101,6 +101,7 @@ for i, (input_text, target_text) in enumerate(zip(input_texts, target_texts)):
     decoder_input_data[i, t + 1:, target_token_index[' ']] = 1.
     decoder_target_data[i, t:, target_token_index[' ']] = 1.
 
+"""
 # Define an input sequence and process it.
 encoder_inputs = Input(shape=(None, num_encoder_tokens))
 # Encoder
@@ -133,6 +134,7 @@ decoder_outputs = Convolution1D(64, kernel_size=3, activation='relu',
 # Output
 decoder_dense = Dense(num_decoder_tokens, activation='softmax')
 decoder_outputs = decoder_dense(decoder_outputs)
+"""
 
 # Define the model that will turn
 # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
